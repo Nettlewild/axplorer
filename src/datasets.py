@@ -137,7 +137,6 @@ def update_datasets(args, data, train_set, test_set, train_path, test_path):
     pickle.dump(train_set, open(train_path, "wb"))
     return train_set, test_set, inc_temp
 
-
 def load_initial_data(args, classname):
     train_data_path = os.path.join(args.dump_path, "train_data.pkl")
     test_data_path = os.path.join(args.dump_path, "test_data.pkl")

@@ -1,9 +1,19 @@
 import numpy as np
+import argparse
+from pathlib import Path
 
 from src.envs.environment import BaseEnvironment, DataPoint
 from src.envs.tokenizers import DenseTokenizer, SparseTokenizerSequenceKTokens, SparseTokenizerSingleInteger
 from src.envs.utils import random_symmetry_adj_matrix, sort_graph_based_on_degree
 from src.utils import bool_flag
+
+
+def read_optimum(N, sep=","):
+    path = Path(__file__).parent / "cycle_optimums.txt"
+    with open(path, "r") as f:
+        values = [int(v.strip()) for v in f.read().split(sep) if v.strip()]
+    # the file starts from N=1: values[i] is ex(i + 1, C4)
+    return values[N - 1] if 1 <= N <= len(values) else None
 
 
 class SquareDataPoint(DataPoint):
@@ -14,6 +24,7 @@ class SquareDataPoint(DataPoint):
         self.N = N
         self.data = np.zeros((self.N, self.N), dtype=np.uint8)
         self.cycles = []
+        self.optimum = self.read_optimum_from_file()
 
         if init:
             # here there cannot be any cycles, so _cycles_computation() is useless
@@ -21,8 +32,14 @@ class SquareDataPoint(DataPoint):
             if self.MAKE_OBJECT_CANONICAL:
                 self.data = sort_graph_based_on_degree(self.data)
             self.calc_features()
-            self.calc_score()
+            self.calc_score() # <-- here self.score is updated
+                              # (number of edges)  
 
+    def read_optimum_from_file(self, sep=","):
+        optimum = read_optimum(self.N, sep)
+        self.exists_optimum = optimum is not None
+        return optimum
+    
     def calc_score(self):
         if len(self.cycles) > 0:
             self.score = -1
@@ -145,6 +162,8 @@ class SquareEnvironment(BaseEnvironment):
 
     def __init__(self, params):
         super().__init__(params)
+        self.optimum = read_optimum(params.N)
+        self.exists_optimum = self.optimum is not None
         self.data_class.MAKE_OBJECT_CANONICAL = params.make_object_canonical
         encoding_augmentation = random_symmetry_adj_matrix if params.augment_data_representation else None
         if params.encoding_tokens == "single_integer":

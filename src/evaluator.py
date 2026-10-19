@@ -1,5 +1,6 @@
 import queue
 import threading
+import time
 from concurrent.futures import ProcessPoolExecutor
 from contextlib import contextmanager
 from logging import getLogger
@@ -73,19 +74,24 @@ def sample_and_score(model, args, stoi, itos, env, temp, temp_span=0):
 
     results = []
     total_invalid = 0
+    score_time = 0.0
     all_processed_data = []
     results_lock = threading.Lock()
 
     executor = ProcessPoolExecutor(max_workers=min(MAX_WORKERS, args.num_workers))
 
     def process_batches(batches):
-        nonlocal total_invalid
+        nonlocal total_invalid, score_time
         all_data = [batch_numpy[j] for batch_numpy in batches for j in range(batch_numpy.shape[0])]
         detok_results = detokenize(all_data, args, env, executor=executor)
+        # LOCAL SEARCH IN HERE
+        score_start = time.time()
         valid_data, n_invalid, processed_data = do_score(detok_results, args=args, executor=executor)
+        score_end = time.time()
         with results_lock:
             results.extend(valid_data)
             total_invalid += n_invalid
+            score_time += score_end - score_start
             all_processed_data.extend(processed_data)
 
     with cpu_sink(process_batches, decouple=True) as sink:
@@ -120,4 +126,17 @@ def sample_and_score(model, args, stoi, itos, env, temp, temp_span=0):
 
     do_stats(total_invalid, all_processed_data)
 
-    return results
+    # same rule as _do_score: always_search -> every sample, redeem_only -> only the invalid ones
+    if args.always_search:
+        num_local_searches = len(all_processed_data)
+    elif args.redeem_only:
+        num_local_searches = total_invalid
+    else:
+        num_local_searches = 0
+    search_stats = {
+        "num_local_searches": num_local_searches,
+        "num_invalid": total_invalid,
+        "searches_per_second": num_local_searches / score_time if score_time > 0 else 0.0,
+    }
+
+    return results, search_stats

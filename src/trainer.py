@@ -3,6 +3,7 @@ import time
 from logging import getLogger
 
 import torch
+from torch.utils.flop_counter import FlopCounterMode
 
 from src.models.model import evaluate
 
@@ -31,6 +32,9 @@ def reload_model_optimizer(args, model, optimizer):
 def train(model, args, loader, optim, test_dataset, current_best_loss=None):
     best_loss = current_best_loss or float("inf")
     curr_loss = 0
+    # FLOPs are measured only at step 0 (FlopCounterMode is slow); the epoch total
+    # is estimated by scaling them with the number of tokens of every step
+    total_tokens = 0
     for step in range(args.max_steps):
 
         if step % 100 == 0:
@@ -38,12 +42,26 @@ def train(model, args, loader, optim, test_dataset, current_best_loss=None):
         batch = loader.next()
         batch = [t.to(args.device) for t in batch]
         X, Y = batch[0], batch[1]
+        total_tokens += X.numel()
 
-        _, loss, _ = model(X, Y)
+        if step == 0:
+            with FlopCounterMode(display=False) as fc_fwd:
+                _, loss, _ = model(X, Y)
+        else:
+            _, loss, _ = model(X, Y)
+
         model.zero_grad(set_to_none=True)
-        loss.backward()
+        
+        if step == 0:
+            with FlopCounterMode(display=False) as fc_bwd:
+                loss.backward()
+            flops_per_token = (fc_fwd.get_total_flops() + fc_bwd.get_total_flops()) / X.numel()
+        else:
+            loss.backward()
+        
         optim.step()
         curr_loss += loss.item()
+
 
         if args.device == "mps" and (step + 1) % 500 == 0:
             torch.mps.empty_cache()
@@ -55,7 +73,7 @@ def train(model, args, loader, optim, test_dataset, current_best_loss=None):
         if (step + 1) % args.num_eval_steps == 0:
             train_loss = curr_loss / args.num_eval_steps
             test_loss = evaluate(model, test_dataset, args.device, batch_size=100, max_batches=10)
-            logger.info(f"step {step + 1} train loss: {train_loss} test loss: {test_loss}")
+            logger.info(f"step {step + 1} train loss: {train_loss} test loss: {test_loss}, flops: {fc_fwd.get_total_flops() + fc_bwd.get_total_flops()}")
             if args.save_best and test_loss < best_loss:
                 model_path = os.path.join(args.dump_path, "model.pt")
                 optimizer_path = os.path.join(args.dump_path, "optimizer.pt")
@@ -71,4 +89,7 @@ def train(model, args, loader, optim, test_dataset, current_best_loss=None):
         torch.save(model.state_dict(), model_path)
         torch.save(optim.state_dict(), optimizer_path)
 
-    return best_loss
+    epoch_flops = flops_per_token * total_tokens if args.max_steps > 0 else 0
+    logger.info(f"estimated training flops for this epoch: {epoch_flops:.3e}")
+
+    return best_loss, epoch_flops

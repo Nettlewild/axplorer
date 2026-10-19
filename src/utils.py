@@ -1,4 +1,5 @@
 import argparse
+import csv
 import ctypes
 import gc
 import os
@@ -120,13 +121,21 @@ def log_resources(label):
     rss_mb = process.memory_info().rss / (1024 * 1024)
     cpu_percent = process.cpu_percent(interval=0.1)
     logger.info(f"[{label}] CPU: {cpu_percent:.1f}% | RAM: {rss_mb:.1f}MB")
+ 
+# num_local_searches dovrebbe essere sempre uguale... se lo è, togliere da csv (controlla)
+METRIC_FIELDS = ["epoch", "mean", "median", "top_1_percentile", "max", "num_local_searches", "num_invalid", "searches_per_second", "flops"]
 
 
 def write_important_metrics(metrics, epoch, metric_file, command=None):
     if metrics is not None:
-        with open(metric_file, "a") as f:
-            if command is not None:
-                f.write(f"command: {command}\n")
-            f.write(
-                f"epoch: {epoch} | mean: {metrics['mean']} | median: {metrics['median']} | top_1_percentile: {metrics['top_1_percentile']} | max: {metrics['max']}\n"
-            )
+        # the command does not fit in the csv: store it in a separate file next to it
+        if command is not None:
+            with open(os.path.join(os.path.dirname(metric_file), "command.txt"), "a") as f:
+                f.write(f"{command}\n")
+        write_header = not os.path.isfile(metric_file) or os.path.getsize(metric_file) == 0
+        with open(metric_file, "a", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=METRIC_FIELDS)
+            if write_header:
+                writer.writeheader()
+            # fields not available (e.g. search stats for the initial dataset) are left empty
+            writer.writerow({"epoch": epoch, **{k: metrics.get(k, "") for k in METRIC_FIELDS[1:]}})

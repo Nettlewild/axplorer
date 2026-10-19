@@ -4,6 +4,7 @@ from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
 from itertools import repeat
 from logging import getLogger
+import time
 
 logger = getLogger()
 
@@ -44,6 +45,9 @@ class DataPoint(ABC):
 class BaseEnvironment(object):
     data_class = None
     SPECIAL_SYMBOLS = ["SEP", "EOS", "PAD", "BOS"]
+    # environments with a known optimum override these
+    optimum = None
+    exists_optimum = False
 
     def __init__(self, params):
         return
@@ -93,6 +97,7 @@ def do_stats(n_invalid, data):
     Compute and log statistics
     """
     scores = [d.score for d in data if d.score >= 0]
+    
     logger.info(f"### Score distribution ###")
     if n_invalid >= 0:
         logger.info(f"Invalid examples: before local search: {n_invalid}, after: {len(data) - len(scores)}")
@@ -106,6 +111,7 @@ def _do_score(d, always_search: bool = False, redeem_only: bool = False, pars=No
     d.calc_features()
     d.calc_score()
     invalid = 1 if d.score < 0 else 0
+    #LOCAL SEARCH IN HERE
     if always_search:
         d.local_search(improve_with_local_search=True)
     elif invalid:
@@ -123,11 +129,14 @@ def do_score(data, args, executor=None):
     n_invalid = 0
     processed_data = []
     if not args.process_pool:
+        local_search_starts = time.time()
         for d in data:
             # warning, change the original list
             res, invalid = _do_score(d, args.always_search, args.redeem_only)
             n_invalid += invalid
             processed_data.append(res)
+        local_search_ends = time.time()
+        logger.info(f"Local search took {(local_search_ends - local_search_starts)*1000:.2f} ms for {len(data)} data points. Rate {len(data)/(local_search_ends - local_search_starts):.2f} data points per second.")
     else:
         pars = data[0]._save_class_params()
 

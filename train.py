@@ -1,5 +1,6 @@
 import argparse
 import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 import time
 from logging import getLogger
 
@@ -69,6 +70,7 @@ def get_parser():
 
 
 if __name__ == "__main__":
+    print("Starting training script")
     parser = get_parser()
     args = parser.parse_args()
 
@@ -91,118 +93,173 @@ if __name__ == "__main__":
     if args.seed < 0:
         args.seed = np.random.randint(1_000_000_000)
     logger.info(f"seed: {args.seed}")
+    print(f"Starting with seed: {args.seed}")
 
     env = build_env(args)
+    exists_optimum = env.exists_optimum
+    # IF A RUN IS RESTARTED, NEEDS TO BE INITIALIZED AT THE PREVIOUS VALUE
+    # always defined, so the final log works also when no optimum is known
+    optimum_counter = 0
+    first_found = False
 
     classname = env.data_class
 
-    # system inits
-    torch.manual_seed(args.seed)
+    try:
+        # system inits
+        torch.manual_seed(args.seed)
 
-    args.vocab_size = len(env.tokenizer.itos)
+        args.vocab_size = len(env.tokenizer.itos)
 
-    args.block_size = args.max_len + 2
-    stoi = env.tokenizer.stoi
-    itos = env.tokenizer.itos
+        args.block_size = args.max_len + 2
+        stoi = env.tokenizer.stoi
+        itos = env.tokenizer.itos
 
-    # Initialize transformer
-    model = Transformer(args, stoi["PAD"], stoi["EOS"])
-    model.to(args.device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay, betas=(0.9, 0.99), eps=1e-8, fused=fused)
-    reload_model_optimizer(args, model, optimizer)
+        # Initialize transformer
+        model = Transformer(args, stoi["PAD"], stoi["EOS"])
+        model.to(args.device)
+        optimizer = torch.optim.AdamW(
+            model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay, betas=(0.9, 0.99), eps=1e-8, fused=fused
+        )
+        reload_model_optimizer(args, model, optimizer)
 
-    train_set, test_set = load_initial_data(args, classname)
-    if args.data_generation_only:
-        logger.info("Data generation only mode. Exiting...")
-        exit(0)
-    train_data_path = os.path.join(args.dump_path, "train_data.pkl")
-    test_data_path = os.path.join(args.dump_path, "test_data.pkl")
+        print(f"Loading initial data for {classname}")
+        train_set, test_set = load_initial_data(args, classname)
+        if args.data_generation_only:
+            logger.info("Data generation only mode. Exiting...")
+            exit(0)
+        train_data_path = os.path.join(args.dump_path, "train_data.pkl")
+        test_data_path = os.path.join(args.dump_path, "test_data.pkl")
 
-    # log initial stats
-    metrics = do_stats(-1, data=train_set)
-    temperature = args.temperature
-    # Loop of Axplorer
-    best_loss = None
-    epoch_file = os.path.join(args.dump_path, "epoch.txt")
-    if os.path.isfile(epoch_file):
-        with open(epoch_file, "r") as f:
-            n_epoch = int(f.read())
-    else:
-        n_epoch = 0
-    temp_file = os.path.join(args.dump_path, "temperature.txt")
-    if os.path.isfile(temp_file):
-        with open(temp_file, "r") as f:
-            temperature = float(f.read())
-    else:
+        # log initial stats
+        metrics = do_stats(-1, data=train_set)
         temperature = args.temperature
 
-    metric_file = os.path.join(args.dump_path, "metrics.txt")
-    write_important_metrics(metrics, n_epoch, metric_file, command=args.command)
+        # Loop of Axplorer
+        best_loss = None
+        epoch_file = os.path.join(args.dump_path, "epoch.txt")
+        if os.path.isfile(epoch_file):
+            with open(epoch_file, "r") as f:
+                n_epoch = int(f.read())
+        else:
+            n_epoch = 0
+        temp_file = os.path.join(args.dump_path, "temperature.txt")
+        if os.path.isfile(temp_file):
+            with open(temp_file, "r") as f:
+                temperature = float(f.read())
+        else:
+            temperature = args.temperature
 
-    for epoch in range(n_epoch, args.max_epochs):
-        logger.info(f"==== Starting Epoch {n_epoch} =====")
-        log_resources(f"Epoch {epoch} START")
+        metric_file = os.path.join(args.dump_path, "metrics.csv")
+        # which important metrics here?
+        write_important_metrics(metrics, n_epoch, metric_file, command=args.command)
 
-        if args.device == "cuda":
-            torch.cuda.empty_cache()
-        elif args.device == "mps":
-            torch.mps.empty_cache()
+        n_local_searches = 0
 
-        # tokenize
-        train_words = [env.tokenizer.encode(d) for d in train_set]
-        test_words = [env.tokenizer.encode(d) for d in test_set]
-        # data loaders
-        train_dataset = CharDataset(train_words, args.max_len, stoi)
-        test_dataset = CharDataset(test_words, args.max_len, stoi)
-        force_release_memory()
+        for epoch in range(n_epoch, args.max_epochs):
+            logger.info(f"==== Starting Epoch {n_epoch} =====")
+            log_resources(f"Epoch {epoch} START")
+            print(f"==== Starting Epoch {n_epoch} =====")
 
-        if args.device == "cuda":
-            logger.info(
-                f"Memory allocated: {torch.cuda.memory_allocated(0)/(1024*1024):.2f}MB, reserved: {torch.cuda.memory_reserved(0)/(1024*1024):.2f}MB"
+            if args.device == "cuda":
+                torch.cuda.empty_cache()
+            elif args.device == "mps":
+                torch.mps.empty_cache()
+
+            # tokenize
+            print("Tokenizing data")
+            train_words = [env.tokenizer.encode(d) for d in train_set]
+            test_words = [env.tokenizer.encode(d) for d in test_set]
+            # data loaders
+            train_dataset = CharDataset(train_words, args.max_len, stoi)
+            test_dataset = CharDataset(test_words, args.max_len, stoi)
+            force_release_memory()
+            # -- Data used for training, so local search must been applied before! --
+
+            if args.device == "cuda":
+                logger.info(
+                    f"Memory allocated: {torch.cuda.memory_allocated(0)/(1024*1024):.2f}MB, reserved: {torch.cuda.memory_reserved(0)/(1024*1024):.2f}MB"
+                )
+            elif args.device == "mps":
+                logger.info(
+                    f"Memory allocated: {torch.mps.current_allocated_memory()/(1024*1024):.2f}MB, reserved: {torch.mps.driver_allocated_memory()/(1024*1024):.2f}MB"
+                )
+
+            batch_loader = InfiniteDataLoader(train_dataset, batch_size=args.batch_size, pin_memory=args.device == "cuda", num_workers=0)
+            try:
+                print(f"Training model for {args.num_eval_steps} steps with batch size {args.batch_size}")
+                best_loss, epoch_flops = train(model, args, batch_loader, optimizer, test_dataset, current_best_loss=best_loss)
+            finally:
+                batch_loader.close()
+                del batch_loader
+            log_resources(f"Epoch {epoch} AFTER_TRAIN")
+            force_release_memory()
+
+            logger.info(f"Sample with temperature {temperature} to {temperature+0.1*args.temp_span}")
+            print(f"Sample with temperature {temperature} to {temperature+0.1*args.temp_span}")
+            if args.device == "cuda":
+                torch.cuda.empty_cache()
+            elif args.device == "mps":
+                torch.mps.empty_cache()
+
+            # AFTER TRAIN: sample_and_score -> genera nuovi grafi con il modello allenato
+            # Search & Score phase, BUT ALSO IMPROVEMENTE:
+            # sample_and_score -> do_score -> _do_score -> local_search
+            # len(new_data) dovrebbe essere lo stesso ad ogni epoca
+            print(f"Sampling and scoring {args.num_samples_from_model} examples")
+            new_data, search_stats = sample_and_score(model, args, stoi, itos, env, temperature, args.temp_span)
+            log_resources(f"Epoch {epoch} AFTER_SAMPLE")
+            n_local_searches += search_stats["num_local_searches"]
+
+            if args.device == "cuda":
+                torch.cuda.empty_cache()
+            elif args.device == "mps":
+                torch.mps.empty_cache()
+
+            # Possible to add another generation method here and mix it before taking the best
+            # Train e test set vengono aggiornati (SOVRASCRITTI)
+            train_set, test_set, inc_temp = update_datasets(args, new_data, train_set, test_set, train_data_path, test_data_path)
+            log_resources(f"Epoch {epoch} AFTER_UPDATE_DATASETS")
+            force_release_memory()
+
+            # Possible to add another generation method here and mix it before taking the best
+            if inc_temp and args.inc_temp > 0.0:
+                temperature += args.inc_temp
+
+            # here metric is csv, so I can't add columns for optimum, but I can log it
+            print("Doing stats on train set")
+            metrics = do_stats(-1, data=train_set)
+            if metrics is not None:
+                metrics.update(search_stats)
+                metrics["flops"] = epoch_flops
+            # here i can check optimum?
+            if exists_optimum and env.optimum is not None:
+                if metrics["max"] >= env.optimum and not first_found:
+                    # Il calcolo delle ricerche locali è corretto?
+                    logger.info(f"Optimum {env.optimum} reached at epoch {n_epoch} AFTER {n_local_searches} local searches")
+                    n_opt = sum(1 for d in new_data if d.score == env.optimum)
+                    optimum_counter += n_opt
+                    first_found = True
+                    
+            n_epoch += 1
+            with open(epoch_file, "w") as f:
+                f.write(str(n_epoch))
+            with open(temp_file, "w") as f:
+                f.write(str(temperature))
+
+            print(f"Writing metrics to {metric_file}")
+            write_important_metrics(metrics, n_epoch, metric_file)
+
+            if n_epoch >= args.max_epochs:
+                # Forse non serve salvare n_epochs quì, potrebbe essere ridondante
+                logger.info(f"Stopping training. Number of optimums found: {optimum_counter} | Number of epochs: {n_epoch} | Number of local searches: {n_local_searches}.")
+                print(f"Stopping training. Number of optimums found: {optimum_counter} | Number of epochs: {n_epoch} | Number of local searches: {n_local_searches}.")
+                break
+    except Exception:
+        logger.exception("Training crashed with an unhandled exception")
+        if args.device == "cuda" and torch.cuda.is_available():
+            logger.error(
+                f"CUDA memory at crash: allocated={torch.cuda.memory_allocated(0)/(1024*1024):.2f}MB, "
+                f"reserved={torch.cuda.memory_reserved(0)/(1024*1024):.2f}MB, "
+                f"max_allocated={torch.cuda.max_memory_allocated(0)/(1024*1024):.2f}MB"
             )
-        elif args.device == "mps":
-            logger.info(
-                f"Memory allocated: {torch.mps.current_allocated_memory()/(1024*1024):.2f}MB, reserved: {torch.mps.driver_allocated_memory()/(1024*1024):.2f}MB"
-            )
-
-        batch_loader = InfiniteDataLoader(train_dataset, batch_size=args.batch_size, pin_memory=args.device == "cuda", num_workers=0)
-        try:
-            best_loss = train(model, args, batch_loader, optimizer, test_dataset, current_best_loss=best_loss)
-        finally:
-            batch_loader.close()
-            del batch_loader
-        log_resources(f"Epoch {epoch} AFTER_TRAIN")
-        force_release_memory()
-
-        logger.info(f"Sample with temperature {temperature} to {temperature+0.1*args.temp_span}")
-        if args.device == "cuda":
-            torch.cuda.empty_cache()
-        elif args.device == "mps":
-            torch.mps.empty_cache()
-
-        new_data = sample_and_score(model, args, stoi, itos, env, temperature, args.temp_span)
-        log_resources(f"Epoch {epoch} AFTER_SAMPLE")
-
-        if args.device == "cuda":
-            torch.cuda.empty_cache()
-        elif args.device == "mps":
-            torch.mps.empty_cache()
-
-        # Possible to add another generation method here and mix it before taking the best
-        train_set, test_set, inc_temp = update_datasets(args, new_data, train_set, test_set, train_data_path, test_data_path)
-        log_resources(f"Epoch {epoch} AFTER_UPDATE_DATASETS")
-        force_release_memory()
-
-        # Possible to add another generation method here and mix it before taking the best
-        if inc_temp and args.inc_temp > 0.0:
-            temperature += args.inc_temp
-
-        metrics = do_stats(-1, data=train_set)
-
-        n_epoch += 1
-        with open(epoch_file, "w") as f:
-            f.write(str(n_epoch))
-        with open(temp_file, "w") as f:
-            f.write(str(temperature))
-
-        write_important_metrics(metrics, n_epoch, metric_file)
+        raise
