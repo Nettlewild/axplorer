@@ -4,21 +4,6 @@ from itertools import combinations, permutations, product
 
 import numpy as np
 
-# generate_index_tuples --> vectorization of the adj
-# Il vettore è scritto in modo diverso a seconda del tokenizzatore
-#   SingleInteger: 1 token per coordinatequindi il vettore è lungo come |E(G)|
-#   SequenceKTokens: k token per coordinate quindi il vettore è lungo come k*|E(G)|
-#   Dense: 1 token per pow2base coordinate quindi il vettore è lungo come |E(G)|/2**pow2base
-# Il numero complessivo di token, nei tre casi, dovrebbe esssere al più
-#   n*(n-1)/2 + |extra_symbols| + 2
-#   k*(n*(n-1)/2) + |extra_symbols| + 2
-#   (n*(n-1)/2)/(2**pow2base) + |extra_symbols| + 2  ?? Qualcosa del genere
-
-# MANCA la parte originale di Patternboost in cui il tokenizzatore apprendeva i tokens
-# con un vocabolario di 100 token
-# su n = 40 --> 780 archi possibili. Il single integer potrebbe arrivare a gestire
-# 780 token, per non parlare del SequenceK. Forse userò Dense?
-
 
 def generate_index_tuples(N, k, are_coordinates_symmetric):
     if k == 1:
