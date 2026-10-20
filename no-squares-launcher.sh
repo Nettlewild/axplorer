@@ -2,7 +2,7 @@
 
 #OAR -q production
 #OAR -p musa
-#OAR -l /host=1/gpu=1,walltime=06:00:00
+#OAR -l /host=1/gpu=1,walltime=96:00:00
 #OAR -O logs/%jobid%.out
 #OAR -E logs/%jobid%.err
 
@@ -104,8 +104,6 @@ DEFAULT_EXP_ID="${SEED_TAG}$(date +%Y_%m_%d_%H_%M_%S)_$$_${RANDOM}"
 # fi
 EXP_ID="${EXP_ID:-$DEFAULT_EXP_ID}"
 
-# MAMBA_ENV_NAME="env_axplorer_gpu_h100"
-# MAMBA_ENV_PREFIX="$HOME/micromamba/envs/$MAMBA_ENV_NAME"
 
 echo "No squares run:"
 echo "  env_name=$ENV_NAME N=$N encoding_tokens=$ENCODING_TOKENS pow2base=$POW2BASE max_len=$MAX_LEN"
@@ -126,10 +124,14 @@ fi
 nvidia-smi
 
 # grid5000
-# LD_LIBRARY_PATH="$MAMBA_ENV_PREFIX/lib:${LD_LIBRARY_PATH:-}"
-# "$HOME/bin/micromamba" run -n "$MAMBA_ENV_NAME" python -c "import torch; print('cuda:', torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NO GPU')"
+ENV_PATH="$HOME/patternboost-env/bin/activate"
+source "$ENV_PATH"
+
+which python
+python -c "import torch; print('cuda:', torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'no GPU')"
+
 # clai
-conda run -n patternboost python -c "import torch; print('cuda:', torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NO GPU')"
+#conda run -n patternboost python -c "import torch; print('cuda:', torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NO GPU')"
 
 CMD=(
   python train.py
@@ -170,8 +172,8 @@ printf 'Training command:'
 printf ' %q' "${CMD[@]}"
 printf '\n'
 
-# LD_LIBRARY_PATH="$MAMBA_ENV_PREFIX/lib:${LD_LIBRARY_PATH:-}" \
+
 # grid5000
-# "$HOME/bin/micromamba" run -n "$MAMBA_ENV_NAME" "${CMD[@]}"
+"${CMD[@]}"
 # clai
-conda run --no-capture-output -n patternboost "${CMD[@]}"
+#conda run --no-capture-output -n patternboost "${CMD[@]}"
