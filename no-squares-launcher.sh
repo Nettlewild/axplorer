@@ -172,8 +172,8 @@ printf 'Training command:'
 printf ' %q' "${CMD[@]}"
 printf '\n'
 
-
 # grid5000
 "${CMD[@]}"
 # clai
 #conda run --no-capture-output -n patternboost "${CMD[@]}"
+
