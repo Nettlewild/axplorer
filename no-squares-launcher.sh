@@ -2,7 +2,7 @@
 
 #OAR -q production
 #OAR -p musa
-#OAR -l /host=1/gpu=1,walltime=06:00:00
+#OAR -l /host=1/gpu=1,walltime=96:00:00
 #OAR -O logs/%jobid%.out
 #OAR -E logs/%jobid%.err
 
