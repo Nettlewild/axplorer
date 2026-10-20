@@ -126,10 +126,10 @@ fi
 nvidia-smi
 
 # grid5000
-# LD_LIBRARY_PATH="$MAMBA_ENV_PREFIX/lib:${LD_LIBRARY_PATH:-}"
-# "$HOME/bin/micromamba" run -n "$MAMBA_ENV_NAME" python -c "import torch; print('cuda:', torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NO GPU')"
+ENV_PATH="$HOME/patternboost-env/bin/activate"
+source "$ENV_PATH"      
 # clai
-conda run -n patternboost python -c "import torch; print('cuda:', torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NO GPU')"
+#conda run -n patternboost python -c "import torch; print('cuda:', torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NO GPU')"
 
 CMD=(
   python train.py
@@ -170,8 +170,7 @@ printf 'Training command:'
 printf ' %q' "${CMD[@]}"
 printf '\n'
 
-# LD_LIBRARY_PATH="$MAMBA_ENV_PREFIX/lib:${LD_LIBRARY_PATH:-}" \
 # grid5000
-# "$HOME/bin/micromamba" run -n "$MAMBA_ENV_NAME" "${CMD[@]}"
+"$CMD[@]"
 # clai
-conda run --no-capture-output -n patternboost "${CMD[@]}"
+#conda run --no-capture-output -n patternboost "${CMD[@]}"
