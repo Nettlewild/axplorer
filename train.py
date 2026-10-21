@@ -61,7 +61,7 @@ def get_parser():
 
     # path and ports
     parser.add_argument("--dump_path", type=str, default="checkpoint", help="Experiment dump path")
-    parser.add_argument("--command", type=int, default="write on csv", help="Command to allow writing on metrics.csv")
+    parser.add_argument("--command", type=int, default=1, help="Command 1 to allow writing on metrics.csv")
     parser.add_argument("--exp_name", type=str, default="debug", help="Experiment name")
     parser.add_argument("--exp_id", type=str, default="", help="Experiment ID")
     parser.add_argument("--cpu", type=bool_flag, default="false", help="run on cpu only")
