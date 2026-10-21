@@ -86,6 +86,8 @@ esac
 MAX_LEN="${MAX_LEN:-$DEFAULT_MAX_LEN}"
 EXP_NAME="${ENV_NAME}_N${N}"
 
+ENV_PREFIX="$HOME/micromamba/envs/env_axplorer"
+
 # Unique run id, so that parallel runs never share a dump folder
 # (checkpoint/<exp_name>/<exp_id>). OAR_JOB_ID is unique per job; outside OAR
 # fall back to timestamp + PID + random suffix. The seed, if given via --seed,
@@ -124,11 +126,11 @@ fi
 nvidia-smi
 
 # grid5000
-ENV_PATH="$HOME/patternboost-env/bin/activate"
-source "$ENV_PATH"
+LD_LIBRARY_PATH="$ENV_PREFIX/lib:${LD_LIBRARY_PATH:-}" \
+"$HOME/.local/bin/micromamba" run -n "env_axplorer" python -c "import torch; print('cuda:', torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NO GPU')"
 
-which python
-python -c "import torch; print('cuda:', torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'no GPU')"
+#which python
+#python -c "import torch; print('cuda:', torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'no GPU')"
 
 # clai
 #conda run -n patternboost python -c "import torch; print('cuda:', torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NO GPU')"
@@ -173,7 +175,9 @@ printf ' %q' "${CMD[@]}"
 printf '\n'
 
 # grid5000
-"${CMD[@]}"
+#"${CMD[@]}"
+LD_LIBRARY_PATH="$ENV_PREFIX/lib:${LD_LIBRARY_PATH:-}" \
+"$HOME/.local/bin/micromamba" run -n "env_axplorer" "${CMD[@]}"
 # clai
 #conda run --no-capture-output -n patternboost "${CMD[@]}"
 

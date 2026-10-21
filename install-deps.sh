@@ -13,7 +13,7 @@ source "$VENV/bin/activate"
 python -m pip install --upgrade pip
 
 # training (train.py, src/)
-python -m pip install torch numpy numba psutil
+python -m pip --no-cache-dir install torch numpy numba psutil
 
 # plotting (plot_experiments.py, tools/plot_score_histograms.py)
 python -m pip install matplotlib pandas seaborn
