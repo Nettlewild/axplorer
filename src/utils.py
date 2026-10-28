@@ -2,6 +2,7 @@ import argparse
 import csv
 import ctypes
 import gc
+import json
 import os
 import pickle
 import re
@@ -122,6 +123,30 @@ def log_resources(label):
     cpu_percent = process.cpu_percent(interval=0.1)
     logger.info(f"[{label}] CPU: {cpu_percent:.1f}% | RAM: {rss_mb:.1f}MB")
  
+RUN_STATE_FILE = "run_state.json"
+
+
+def load_run_state(dump_path, default):
+    """
+    Counters of the run that must survive a restart (stored next to epoch.txt).
+    """
+    path = os.path.join(dump_path, RUN_STATE_FILE)
+    state = dict(default)
+    if os.path.isfile(path):
+        with open(path, "r") as f:
+            state.update(json.load(f))
+        logger.info(f"resuming run state from {path}: {state}")
+    return state
+
+
+def save_run_state(dump_path, state):
+    # write to a temporary file and rename it, so a crash never leaves a truncated file
+    path = os.path.join(dump_path, RUN_STATE_FILE)
+    with open(path + ".tmp", "w") as f:
+        json.dump(state, f, indent=2)
+    os.replace(path + ".tmp", path)
+
+
 # num_local_searches dovrebbe essere sempre uguale... se lo è, togliere da csv (controlla)
 METRIC_FIELDS = ["epoch", "mean", "median", "top_1_percentile", "max", "num_local_searches", "num_invalid", "searches_per_second", "flops"]
 
