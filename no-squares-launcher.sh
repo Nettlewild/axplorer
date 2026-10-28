@@ -180,7 +180,6 @@ printf 'Training command:'
 printf ' %q' "${CMD[@]}"
 printf '\n'
 
-<<<<<<< HEAD
 run_training() {
   # grid5000
   #"${CMD[@]}"
@@ -241,11 +240,5 @@ while true; do
   nvidia-smi
   sleep 30
 done
-=======
-# grid5000
-#LD_LIBRARY_PATH="$ENV_PREFIX/lib:${LD_LIBRARY_PATH:-}" \
-#"$HOME/.local/bin/micromamba" run -n "env_axplorer" "${CMD[@]}"
-# clai
-conda run --no-capture-output -n patternboost "${CMD[@]}"
->>>>>>> origin/flora-devel
+
 
