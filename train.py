@@ -13,7 +13,7 @@ from src.envs.environment import do_stats
 from src.evaluator import sample_and_score
 from src.models.model import Transformer
 from src.trainer import reload_model_optimizer, train
-from src.utils import bool_flag, force_release_memory, initialize_exp, log_resources, write_important_metrics
+from src.utils import bool_flag, force_release_memory, initialize_exp, load_run_state, log_resources, save_run_state, write_important_metrics
 
 logger = getLogger()
 
@@ -98,10 +98,14 @@ if __name__ == "__main__":
 
     env = build_env(args)
     exists_optimum = env.exists_optimum
-    # IF A RUN IS RESTARTED, NEEDS TO BE INITIALIZED AT THE PREVIOUS VALUE
+    # counters of the whole run: reloaded from run_state.json when a run is restarted
     # always defined, so the final log works also when no optimum is known
-    optimum_counter = 0
-    first_found = False
+    run_state = load_run_state(
+        args.dump_path, {"optimum_counter": 0, "first_found": False, "first_found_epoch": None, "n_local_searches": 0, "best_loss": None}
+    )
+    optimum_counter = run_state["optimum_counter"]
+    first_found = run_state["first_found"]
+    first_found_epoch = run_state["first_found_epoch"]
 
     classname = env.data_class
 
@@ -136,7 +140,7 @@ if __name__ == "__main__":
         temperature = args.temperature
 
         # Loop of Axplorer
-        best_loss = None
+        best_loss = run_state["best_loss"]
         epoch_file = os.path.join(args.dump_path, "epoch.txt")
         if os.path.isfile(epoch_file):
             with open(epoch_file, "r") as f:
@@ -152,9 +156,14 @@ if __name__ == "__main__":
 
         metric_file = os.path.join(args.dump_path, "metrics.csv")
         # which important metrics here?
-        write_important_metrics(metrics, n_epoch, metric_file, command=args.command)
+        if os.path.isfile(metric_file) and os.path.getsize(metric_file) > 0:
+            # restarted run: the initial row is already in metrics.csv, only record the command
+            with open(os.path.join(args.dump_path, "command.txt"), "a") as f:
+                f.write(f"{args.command}\n")
+        else:
+            write_important_metrics(metrics, n_epoch, metric_file, command=args.command)
 
-        n_local_searches = 0
+        n_local_searches = run_state["n_local_searches"]
 
         for epoch in range(n_epoch, args.max_epochs):
             logger.info(f"==== Starting Epoch {n_epoch} =====")
@@ -240,8 +249,20 @@ if __name__ == "__main__":
                     n_opt = sum(1 for d in new_data if d.score == env.optimum)
                     optimum_counter += n_opt
                     first_found = True
-                    
+                    first_found_epoch = n_epoch
+
             n_epoch += 1
+            # saved before epoch.txt: a restart never counts this epoch twice
+            save_run_state(
+                args.dump_path,
+                {
+                    "optimum_counter": optimum_counter,
+                    "first_found": first_found,
+                    "first_found_epoch": first_found_epoch,
+                    "n_local_searches": n_local_searches,
+                    "best_loss": best_loss,
+                },
+            )
             with open(epoch_file, "w") as f:
                 f.write(str(n_epoch))
             with open(temp_file, "w") as f:
@@ -252,8 +273,8 @@ if __name__ == "__main__":
 
             if n_epoch >= args.max_epochs:
                 # Forse non serve salvare n_epochs quì, potrebbe essere ridondante
-                logger.info(f"Stopping training. Number of optimums found: {optimum_counter} | Number of epochs: {n_epoch} | Number of local searches: {n_local_searches}.")
-                print(f"Stopping training. Number of optimums found: {optimum_counter} | Number of epochs: {n_epoch} | Number of local searches: {n_local_searches}.")
+                logger.info(f"Stopping training. Number of optimums found: {optimum_counter} | Number of epochs: {n_epoch} | Number of local searches: {n_local_searches} | First optimum at epoch: {first_found_epoch}.")
+                print(f"Stopping training. Number of optimums found: {optimum_counter} | Number of epochs: {n_epoch} | Number of local searches: {n_local_searches} | First optimum at epoch: {first_found_epoch}.")
                 break
     except Exception:
         logger.exception("Training crashed with an unhandled exception")
