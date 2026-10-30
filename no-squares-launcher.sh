@@ -93,10 +93,16 @@ ENV_PREFIX="$HOME/micromamba/envs/env_axplorer"
 # fall back to timestamp + PID + random suffix. The seed, if given via --seed,
 # is included for readability. Override with EXP_ID=... or --exp_id ...
 SEED_TAG=""
+ARG_EXP_ID=""
+DUMP_PATH="checkpoint"
 for ((i = 0; i < ${#EXTRA_ARGS[@]}; i++)); do
   case "${EXTRA_ARGS[$i]}" in
-    --seed)   SEED_TAG="seed${EXTRA_ARGS[$((i + 1))]}_" ;;
-    --seed=*) SEED_TAG="seed${EXTRA_ARGS[$i]#--seed=}_" ;;
+    --seed)        SEED_TAG="seed${EXTRA_ARGS[$((i + 1))]}_" ;;
+    --seed=*)      SEED_TAG="seed${EXTRA_ARGS[$i]#--seed=}_" ;;
+    --exp_id)      ARG_EXP_ID="${EXTRA_ARGS[$((i + 1))]}" ;;
+    --exp_id=*)    ARG_EXP_ID="${EXTRA_ARGS[$i]#--exp_id=}" ;;
+    --dump_path)   DUMP_PATH="${EXTRA_ARGS[$((i + 1))]}" ;;
+    --dump_path=*) DUMP_PATH="${EXTRA_ARGS[$i]#--dump_path=}" ;;
   esac
 done
 # if [ -n "${OAR_JOB_ID:-}" ]; then
@@ -178,11 +184,66 @@ printf 'Training command:'
 printf ' %q' "${CMD[@]}"
 printf '\n'
 
-# grid5000
-#LD_LIBRARY_PATH="$ENV_PREFIX/lib:${LD_LIBRARY_PATH:-}" \
-#"$HOME/.local/bin/micromamba" run -n "env_axplorer" "${CMD[@]}"
-# clai
-#conda run --no-capture-output -n patternboost "${CMD[@]}"
-# sofia
-"${CMD[@]}"
+
+run_training() {
+  # grid5000
+  #"${CMD[@]}"
+  LD_LIBRARY_PATH="$ENV_PREFIX/lib:${LD_LIBRARY_PATH:-}" \
+  "$HOME/.local/bin/micromamba" run -n "env_axplorer" "${CMD[@]}"
+  # clai
+  #conda run --no-capture-output -n patternboost "${CMD[@]}"
+}
+
+# Automatic restart after an out-of-memory crash (CUDA OOM, MemoryError, or
+# process killed by the kernel/cgroup OOM killer, exit code 137).
+# The command is relaunched unchanged, with the same exp_id: train.py then
+# resumes from model.pt / optimizer.pt / train_data.pkl / epoch.txt of the run
+# folder. The run is abandoned after MAX_OOM_RESTARTS consecutive OOM crashes
+# without any epoch completed in between (the counter resets on progress).
+MAX_OOM_RESTARTS="${MAX_OOM_RESTARTS:-5}"
+RUN_DIR="$DUMP_PATH/$EXP_NAME/${ARG_EXP_ID:-$EXP_ID}"
+EPOCH_FILE="$RUN_DIR/epoch.txt"
+OOM_PATTERN='out of memory|OutOfMemoryError|MemoryError|CUBLAS_STATUS_ALLOC_FAILED|Cannot allocate memory'
+
+read_epoch() { cat "$EPOCH_FILE" 2>/dev/null || echo "none"; }
+
+attempt=0
+oom_streak=0
+while true; do
+  attempt=$((attempt + 1))
+  ATTEMPT_LOG="logs/${EXP_NAME}_${ARG_EXP_ID:-$EXP_ID}_attempt${attempt}.log"
+  epoch_before="$(read_epoch)"
+  echo "[launcher] $(date '+%F %T') attempt $attempt (epoch.txt: $epoch_before), output also in $ATTEMPT_LOG"
+
+  run_training 2>&1 | tee "$ATTEMPT_LOG"
+  status=${PIPESTATUS[0]}
+
+  if [ "$status" -eq 0 ]; then
+    echo "[launcher] $(date '+%F %T') training finished (exit code 0)"
+    break
+  fi
+
+  if [ "$status" -ne 137 ] && ! tail -n 200 "$ATTEMPT_LOG" | grep -qE "$OOM_PATTERN"; then
+    echo "[launcher] $(date '+%F %T') training failed with exit code $status (not an out-of-memory error): no restart"
+    exit "$status"
+  fi
+
+  epoch_after="$(read_epoch)"
+  if [ "$epoch_after" != "$epoch_before" ]; then
+    oom_streak=1
+  else
+    oom_streak=$((oom_streak + 1))
+  fi
+  echo "[launcher] $(date '+%F %T') OUT OF MEMORY (exit code $status) at epoch.txt=$epoch_after; consecutive OOMs without progress: $oom_streak/$MAX_OOM_RESTARTS"
+  if [ "$oom_streak" -ge "$MAX_OOM_RESTARTS" ]; then
+    echo "[launcher] too many OOM crashes without progress: giving up"
+    exit "$status"
+  fi
+  if [ ! -f "$RUN_DIR/model.pt" ]; then
+    echo "[launcher] no model.pt yet in $RUN_DIR: the run restarts from scratch"
+  fi
+  nvidia-smi
+  sleep 30
+done
+
 
