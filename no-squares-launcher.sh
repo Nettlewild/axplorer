@@ -139,11 +139,13 @@ nvidia-smi
 #python -c "import torch; print('cuda:', torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'no GPU')"
 
 # clai
-conda run -n patternboost python -c "import torch; print('cuda:', torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NO GPU')"
+# conda run -n patternboost python -c "import torch; print('cuda:', torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NO GPU')"
 
 # sofia
 source "/home/angileri/flora/bin/patternboost/bin/activate"
-python -c "import torch; print('cuda:', torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NO GPU')"
+export CUDA_VISIBLE_DEVICES=$(nvidia-smi --query-gpu=index,memory.free --format=csv,noheader,nounits | sort -t, -k2 -nr | head -1 | cut -d, -f1)
+echo "USED GPU $CUDA_VISIBLE_DEVICES"
+python -c "import torch; print('cuda:', torch.cuda.is_available()); print('GPU visibili:', torch.cuda.device_count())"
 
 CMD=(
   python train.py
