@@ -135,6 +135,10 @@ nvidia-smi
 # clai
 conda run -n patternboost python -c "import torch; print('cuda:', torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NO GPU')"
 
+# sofia
+source "/home/angileri/flora/bin/patternboost/bin/activate"
+python -c "import torch; print('cuda:', torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NO GPU')"
+
 CMD=(
   python train.py
   --env_name "$ENV_NAME"
@@ -178,5 +182,7 @@ printf '\n'
 #LD_LIBRARY_PATH="$ENV_PREFIX/lib:${LD_LIBRARY_PATH:-}" \
 #"$HOME/.local/bin/micromamba" run -n "env_axplorer" "${CMD[@]}"
 # clai
-conda run --no-capture-output -n patternboost "${CMD[@]}"
+#conda run --no-capture-output -n patternboost "${CMD[@]}"
+# sofia
+"${CMD[@]}"
 
