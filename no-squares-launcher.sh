@@ -58,7 +58,7 @@ MAKE_OBJECT_CANONICAL="${MAKE_OBJECT_CANONICAL:-false}"
 # NUM_EVAL_STEPS="${NUM_EVAL_STEPS:-100}"
 # NUM_SAMPLES_FROM_MODEL="${NUM_SAMPLES_FROM_MODEL:-10000}"
 # GEN_BATCH_SIZE="${GEN_BATCH_SIZE:-1000}"
-# NUM_WORKERS="${NUM_WORKERS:-8}"
+NUM_WORKERS="${NUM_WORKERS:-16}"
 # BATCH_SIZE="${BATCH_SIZE:-32}"
 # N_LAYER="${N_LAYER:-4}"
 # N_EMBD="${N_EMBD:-256}"
@@ -70,7 +70,7 @@ MAKE_OBJECT_CANONICAL="${MAKE_OBJECT_CANONICAL:-false}"
 # ENVIRONMENTAL PARAMETERS: what do they do?
 # --- 13/10/2026 ---
 AUGMENT_DATA_REPRESENTATION="${AUGMENT_DATA_REPRESENTATION:-false}"
-NO_POSITIONAL="${NO_POSITIONAL:-true}"
+NO_POSITIONAL="${NO_POSITIONAL:-false}"
 
 # Default max_len = tokens needed to encode a graph + BOS/EOS.
 # Sparse encodings use one token (single_integer) or two tokens (sequence_k_tokens)
@@ -170,7 +170,7 @@ CMD=(
   # --temperature "$TEMPERATURE"
   # --temp_span "$TEMP_SPAN"
   --no_positional "$NO_POSITIONAL"
-  # --num_workers "$NUM_WORKERS"
+  --num_workers "$NUM_WORKERS"
 )
 
 if [ -n "${TRAIN_EXTRA_ARGS:-}" ]; then
@@ -188,10 +188,12 @@ printf '\n'
 run_training() {
   # grid5000
   #"${CMD[@]}"
-  LD_LIBRARY_PATH="$ENV_PREFIX/lib:${LD_LIBRARY_PATH:-}" \
-  "$HOME/.local/bin/micromamba" run -n "env_axplorer" "${CMD[@]}"
+  #LD_LIBRARY_PATH="$ENV_PREFIX/lib:${LD_LIBRARY_PATH:-}" \
+  #"$HOME/.local/bin/micromamba" run -n "env_axplorer" "${CMD[@]}"
   # clai
   #conda run --no-capture-output -n patternboost "${CMD[@]}"
+  # sofia
+  "${CMD[@]}"
 }
 
 # Automatic restart after an out-of-memory crash (CUDA OOM, MemoryError, or
@@ -245,5 +247,3 @@ while true; do
   nvidia-smi
   sleep 30
 done
-
-
