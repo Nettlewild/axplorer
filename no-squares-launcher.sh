@@ -13,6 +13,12 @@
 #    oarsub -S "./no-squares-launcher.sh 30 --max_epochs 52"
 #    oarsub -S "./no-squares-launcher.sh --max_epochs 52"
 
+# g -> grid
+# s -> sofia
+# c -> clai
+
+MACHINE_NAME="g"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 mkdir -p logs
@@ -131,6 +137,18 @@ fi
 # fi
 nvidia-smi
 
+if [ "$MACHINE_NAME" = "g" ]; then
+  LD_LIBRARY_PATH="$ENV_PREFIX/lib:${LD_LIBRARY_PATH:-}" \
+  "$HOME/.local/bin/micromamba" run -n "env_axplorer" python -c "import torch; print('cuda:', torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NO GPU')"
+  which python
+  python -c "import torch; print('cuda:', torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'no GPU')"
+elif [ "$MACHINE_NAME" = "c" ]; then
+  conda run -n patternboost python -c "import torch; print('cuda:', torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NO GPU')"
+elif [ "$MACHINE_NAME" = "s" ]; then
+  source "/home/angileri/flora/bin/patternboost/bin/activate"
+  python -c "import torch; print('cuda:', torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NO GPU')"
+fi
+
 # grid5000
 #LD_LIBRARY_PATH="$ENV_PREFIX/lib:${LD_LIBRARY_PATH:-}" \
 #"$HOME/.local/bin/micromamba" run -n "env_axplorer" python -c "import torch; print('cuda:', torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NO GPU')"
@@ -139,11 +157,11 @@ nvidia-smi
 #python -c "import torch; print('cuda:', torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'no GPU')"
 
 # clai
-conda run -n patternboost python -c "import torch; print('cuda:', torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NO GPU')"
+#conda run -n patternboost python -c "import torch; print('cuda:', torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NO GPU')"
 
 # sofia
-source "/home/angileri/flora/bin/patternboost/bin/activate"
-python -c "import torch; print('cuda:', torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NO GPU')"
+#source "/home/angileri/flora/bin/patternboost/bin/activate"
+#python -c "import torch; print('cuda:', torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'NO GPU')"
 
 CMD=(
   python train.py
@@ -186,6 +204,15 @@ printf '\n'
 
 
 run_training() {
+  if [ "$MACHINE_NAME" = "g" ]; then
+    LD_LIBRARY_PATH="$ENV_PREFIX/lib:${LD_LIBRARY_PATH:-}" \
+    "$HOME/.local/bin/micromamba" run -n "env_axplorer" "${CMD[@]}"
+  elif [ "$MACHINE_NAME" = "c" ]; then
+    conda run --no-capture-output -n patternboost "${CMD[@]}"
+  elif [ "$MACHINE_NAME" = "s" ]; then
+    source "/home/angileri/flora/bin/patternboost/bin/activate"
+    "${CMD[@]}"
+  fi
   # grid5000
   #"${CMD[@]}"
   #LD_LIBRARY_PATH="$ENV_PREFIX/lib:${LD_LIBRARY_PATH:-}" \
@@ -193,7 +220,7 @@ run_training() {
   # clai
   #conda run --no-capture-output -n patternboost "${CMD[@]}"
   # sofia
-  "${CMD[@]}"
+  #"${CMD[@]}"
 }
 
 # Automatic restart after an out-of-memory crash (CUDA OOM, MemoryError, or
