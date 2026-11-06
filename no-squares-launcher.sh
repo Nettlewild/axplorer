@@ -210,6 +210,8 @@ run_training() {
   elif [ "$MACHINE_NAME" = "c" ]; then
     conda run --no-capture-output -n patternboost "${CMD[@]}"
   elif [ "$MACHINE_NAME" = "s" ]; then
+    export CUDA_VISIBLE_DEVICES=$(nvidia-smi --query-gpu=index,memory.free --format=csv,noheader,nounits | sort -t, -k2 -nr | head -1 | cut -d, -f1)
+    echo "USED GPU $CUDA_VISIBLE_DEVICES"
     source "/home/angileri/flora/bin/patternboost/bin/activate"
     "${CMD[@]}"
   fi
