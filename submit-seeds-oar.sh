@@ -22,7 +22,7 @@ if ! command -v oarsub >/dev/null 2>&1; then
 fi
 
 for ((s = FIRST_SEED; s < FIRST_SEED + NUM_SEEDS; s++)); do
-  JOB_CMD=$(printf '%q ' ./no-squares-launcher.sh "$@" --seed "$s")
+  JOB_CMD=$(printf '%q ' ./grid-no-squares-launcher.sh "$@" --seed "$s")
   echo "Seed $s: oarsub -S \"$JOB_CMD\""
   oarsub -S "$JOB_CMD" || echo "  submission failed for seed $s" >&2
 done
