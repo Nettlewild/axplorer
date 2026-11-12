@@ -1,6 +1,8 @@
 import argparse
+import csv
 import os
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+import random
 import time
 from logging import getLogger
 
@@ -16,6 +18,61 @@ from src.trainer import reload_model_optimizer, train
 from src.utils import bool_flag, force_release_memory, initialize_exp, load_run_state, log_resources, save_run_state, write_important_metrics
 
 logger = getLogger()
+
+# Single file holding the whole state of the run at the end of an epoch.
+# It is written atomically, so it is always consistent: model, optimizer, datasets,
+# counters and RNG states all refer to the same epoch boundary.
+CHECKPOINT_FILE = "checkpoint.pt"
+
+
+def get_rng_states(device):
+    states = {
+        "python": random.getstate(),
+        "numpy": np.random.get_state(),
+        "torch": torch.get_rng_state(),
+    }
+    if device == "cuda":
+        states["cuda"] = torch.cuda.get_rng_state_all()
+    elif device == "mps":
+        states["mps"] = torch.mps.get_rng_state()
+    return states
+
+
+def set_rng_states(states, device):
+    random.setstate(states["python"])
+    np.random.set_state(states["numpy"])
+    torch.set_rng_state(states["torch"])
+    if device == "cuda" and "cuda" in states:
+        torch.cuda.set_rng_state_all(states["cuda"])
+    elif device == "mps" and "mps" in states:
+        torch.mps.set_rng_state(states["mps"])
+
+
+def save_checkpoint(dump_path, state):
+    # write to a temporary file and rename it: a crash during the save never corrupts the checkpoint
+    path = os.path.join(dump_path, CHECKPOINT_FILE)
+    torch.save(state, path + ".tmp")
+    os.replace(path + ".tmp", path)
+
+
+def load_checkpoint(dump_path):
+    path = os.path.join(dump_path, CHECKPOINT_FILE)
+    if not os.path.isfile(path):
+        return None
+    # map_location="cpu": RNG states must be CPU ByteTensors; model/optimizer
+    # tensors are moved to the right device by load_state_dict.
+    # weights_only=False: the checkpoint contains datasets (custom classes) and the numpy RNG state.
+    ckpt = torch.load(path, map_location="cpu", weights_only=False)
+    logger.info(f"resuming from {path} (epoch {ckpt['n_epoch']})")
+    return ckpt
+
+
+def last_logged_epoch(metric_file):
+    if not os.path.isfile(metric_file) or os.path.getsize(metric_file) == 0:
+        return None
+    with open(metric_file, "r", newline="") as f:
+        rows = list(csv.DictReader(f))
+    return int(rows[-1]["epoch"]) if rows else None
 
 
 def get_parser():
@@ -79,11 +136,15 @@ if __name__ == "__main__":
         os.environ["MODAL_EXP_ID"] = time.strftime("%Y_%m_%d_%H_%M_%S")
         args.exp_id = os.environ["MODAL_EXP_ID"]
 
-    args.device = "cpu" if args.cpu else ("mps" if torch.backends.mps.is_available() else "cuda")
-    if args.device == "cuda":
-        torch.cuda.manual_seed_all(args.seed)
-    if args.device == "mps":
-        torch.mps.manual_seed(args.seed)
+    if args.cpu:
+        args.device = "cpu"
+    elif torch.cuda.is_available():
+        args.device = "cuda"
+    elif torch.backends.mps.is_available():
+        args.device = "mps"
+    else:
+        args.device = "cpu"
+        print("No GPU available (CUDA/MPS): falling back to CPU.")
 
     fused = True if args.device in ["cuda", "mps"] else False
 
@@ -91,18 +152,38 @@ if __name__ == "__main__":
     if not os.path.exists(args.dump_path):
         os.makedirs(args.dump_path)
 
-    if args.seed < 0:
+    # full state of a previous run of this experiment (same dump_path / exp_id), if any
+    ckpt = load_checkpoint(args.dump_path)
+
+    if ckpt is not None:
+        if args.seed >= 0 and args.seed != ckpt["seed"]:
+            logger.warning(f"--seed {args.seed} ignored: resuming the run started with seed {ckpt['seed']}")
+        args.seed = ckpt["seed"]
+    elif args.seed < 0:
         args.seed = np.random.randint(1_000_000_000)
     logger.info(f"seed: {args.seed}")
     print(f"Starting with seed: {args.seed}")
 
+    # seed every generator once the seed is known (torch.manual_seed also seeds cuda).
+    # On a resume these states are overwritten below with the ones saved in the checkpoint.
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    if args.device == "cuda":
+        torch.cuda.manual_seed_all(args.seed)
+    if args.device == "mps":
+        torch.mps.manual_seed(args.seed)
+
     env = build_env(args)
     exists_optimum = env.exists_optimum
-    # counters of the whole run: reloaded from run_state.json when a run is restarted
+    # counters of the whole run: reloaded from the checkpoint (or the legacy run_state.json) when a run is restarted
     # always defined, so the final log works also when no optimum is known
-    run_state = load_run_state(
-        args.dump_path, {"optimum_counter": 0, "first_found": False, "first_found_epoch": None, "n_local_searches": 0, "best_loss": None}
-    )
+    if ckpt is not None:
+        run_state = ckpt["run_state"]
+    else:
+        run_state = load_run_state(
+            args.dump_path, {"optimum_counter": 0, "first_found": False, "first_found_epoch": None, "n_local_searches": 0, "best_loss": None}
+        )
     optimum_counter = run_state["optimum_counter"]
     first_found = run_state["first_found"]
     first_found_epoch = run_state["first_found_epoch"]
@@ -110,9 +191,6 @@ if __name__ == "__main__":
     classname = env.data_class
 
     try:
-        # system inits
-        torch.manual_seed(args.seed)
-
         args.vocab_size = len(env.tokenizer.itos)
 
         args.block_size = args.max_len + 2
@@ -125,34 +203,66 @@ if __name__ == "__main__":
         optimizer = torch.optim.AdamW(
             model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay, betas=(0.9, 0.99), eps=1e-8, fused=fused
         )
-        reload_model_optimizer(args, model, optimizer)
+        if ckpt is not None:
+            model.load_state_dict(ckpt["model"])
+            optimizer.load_state_dict(ckpt["optimizer"])
+        else:
+            # legacy restart (runs started before checkpoint.pt existed)
+            reload_model_optimizer(args, model, optimizer)
 
-        print(f"Loading initial data for {classname}")
-        train_set, test_set = load_initial_data(args, classname)
+        train_data_path = os.path.join(args.dump_path, "train_data.pkl")
+        test_data_path = os.path.join(args.dump_path, "test_data.pkl")
+        if ckpt is not None:
+            train_set, test_set = ckpt["train_set"], ckpt["test_set"]
+        else:
+            print(f"Loading initial data for {classname}")
+            train_set, test_set = load_initial_data(args, classname)
         if args.data_generation_only:
             logger.info("Data generation only mode. Exiting...")
             exit(0)
-        train_data_path = os.path.join(args.dump_path, "train_data.pkl")
-        test_data_path = os.path.join(args.dump_path, "test_data.pkl")
 
         # log initial stats
         metrics = do_stats(-1, data=train_set)
-        temperature = args.temperature
 
         # Loop of Axplorer
-        best_loss = run_state["best_loss"]
         epoch_file = os.path.join(args.dump_path, "epoch.txt")
-        if os.path.isfile(epoch_file):
-            with open(epoch_file, "r") as f:
-                n_epoch = int(f.read())
-        else:
-            n_epoch = 0
         temp_file = os.path.join(args.dump_path, "temperature.txt")
-        if os.path.isfile(temp_file):
-            with open(temp_file, "r") as f:
-                temperature = float(f.read())
+        if ckpt is not None:
+            best_loss = run_state["best_loss"]
+            n_epoch = ckpt["n_epoch"]
+            temperature = ckpt["temperature"]
         else:
-            temperature = args.temperature
+            best_loss = run_state["best_loss"]
+            if os.path.isfile(epoch_file):
+                with open(epoch_file, "r") as f:
+                    n_epoch = int(f.read())
+            else:
+                n_epoch = 0
+            if os.path.isfile(temp_file):
+                with open(temp_file, "r") as f:
+                    temperature = float(f.read())
+            else:
+                temperature = args.temperature
+
+        def build_checkpoint():
+            return {
+                "seed": args.seed,
+                "n_epoch": n_epoch,
+                "temperature": temperature,
+                "run_state": {
+                    "optimum_counter": optimum_counter,
+                    "first_found": first_found,
+                    "first_found_epoch": first_found_epoch,
+                    "n_local_searches": n_local_searches,
+                    "best_loss": best_loss,
+                },
+                "model": model.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "train_set": train_set,
+                "test_set": test_set,
+                "metrics": metrics,
+                "rng": get_rng_states(args.device),
+            }
 
         metric_file = os.path.join(args.dump_path, "metrics.csv")
         # which important metrics here?
@@ -160,10 +270,24 @@ if __name__ == "__main__":
             # restarted run: the initial row is already in metrics.csv, only record the command
             with open(os.path.join(args.dump_path, "command.txt"), "a") as f:
                 f.write(f"{args.command}\n")
+            # the crash may have happened after the checkpoint but before the metrics row of that epoch
+            if ckpt is not None and ckpt["metrics"] is not None:
+                last = last_logged_epoch(metric_file)
+                if last is None or last < n_epoch:
+                    logger.info(f"writing the missing metrics row of epoch {n_epoch}")
+                    write_important_metrics(ckpt["metrics"], n_epoch, metric_file)
         else:
             write_important_metrics(metrics, n_epoch, metric_file, command=args.command)
 
         n_local_searches = run_state["n_local_searches"]
+
+        if ckpt is not None:
+            # restored last: everything above (env, model init, data) must not consume the restored streams
+            set_rng_states(ckpt["rng"], args.device)
+            del ckpt
+        else:
+            # first checkpoint, right after the initial data: a crash during epoch 0 resumes from here
+            save_checkpoint(args.dump_path, build_checkpoint())
 
         for epoch in range(n_epoch, args.max_epochs):
             logger.info(f"==== Starting Epoch {n_epoch} =====")
@@ -252,7 +376,9 @@ if __name__ == "__main__":
                     first_found_epoch = n_epoch
 
             n_epoch += 1
-            # saved before epoch.txt: a restart never counts this epoch twice
+            # the checkpoint is the source of truth for a restart: it is written first, in one atomic step
+            save_checkpoint(args.dump_path, build_checkpoint())
+            # legacy files, kept in sync for the existing tools
             save_run_state(
                 args.dump_path,
                 {
