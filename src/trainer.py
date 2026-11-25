@@ -35,6 +35,7 @@ def train(model, args, loader, optim, test_dataset, current_best_loss=None):
     # FLOPs are measured only at step 0 (FlopCounterMode is slow); the epoch total
     # is estimated by scaling them with the number of tokens of every step
     total_tokens = 0
+    model.zero_grad(set_to_none=True)
     for step in range(args.max_steps):
 
         if step % 100 == 0:
@@ -50,8 +51,6 @@ def train(model, args, loader, optim, test_dataset, current_best_loss=None):
         else:
             _, loss, _ = model(X, Y)
 
-        model.zero_grad(set_to_none=True)
-        
         if step == 0:
             with FlopCounterMode(display=False) as fc_bwd:
                 loss.backward()
@@ -60,6 +59,7 @@ def train(model, args, loader, optim, test_dataset, current_best_loss=None):
             loss.backward()
         
         optim.step()
+        model.zero_grad(set_to_none=True)
         curr_loss += loss.item()
 
 
